@@ -74,7 +74,7 @@
   // ---------- state ----------
   let S = load();
   let DB = null;
-  const ui = { tab: "home", workoutId: null, summaryId: null, groupId: null, q: "", pickFor: null, period: "month" };
+  const ui = { coach: false, tab: "home", workoutId: null, summaryId: null, groupId: null, q: "", pickFor: null, period: "month" };
 
   function blank() { return { profile: {}, measurements: [], workouts: [] }; }
   function load() {
@@ -224,6 +224,7 @@
     chat: '<path d="M4 5h16v11H9l-5 4z"/>',
     check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
     lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+    spark: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
     trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0zM8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8.5 20h7"/>',
   };
   const icon = (k) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[k] || ICONS.flag}</svg>`;
@@ -287,7 +288,7 @@
   // ---------- навигация ----------
   // Каждый переход записывается в историю браузера, поэтому системный жест/кнопка «Назад»
   // возвращает на предыдущий экран, а не закрывает приложение.
-  const snap = () => ({ tab: ui.tab, workoutId: ui.workoutId, summaryId: ui.summaryId, groupId: ui.groupId, q: ui.q, pickFor: ui.pickFor, period: ui.period });
+  const snap = () => ({ tab: ui.tab, workoutId: ui.workoutId, summaryId: ui.summaryId, groupId: ui.groupId, q: ui.q, pickFor: ui.pickFor, period: ui.period, coach: ui.coach });
   function go(tab, opts = {}) {
     Object.assign(ui, { tab }, opts); render(); window.scrollTo(0, 0);
     try { history.pushState({ ui: snap() }, ""); } catch (e) {}
@@ -299,19 +300,191 @@
   });
   document.querySelectorAll("nav.tabs button").forEach((b) => b.addEventListener("click", () => {
     const t = b.dataset.tab;
-    go(t, t === "log" ? { workoutId: null, summaryId: null } : t === "catalog" ? { groupId: null, q: "" } : {});
+    go(t, Object.assign({ coach: false }, t === "log" ? { workoutId: null, summaryId: null } : t === "catalog" ? { groupId: null, q: "" } : {}));
   }));
   function render() {
     document.querySelectorAll("nav.tabs button").forEach((b) => b.setAttribute("aria-current", String(b.dataset.tab === ui.tab)));
     const v = $("#view");
     if (!DB) { v.innerHTML = `<p class="muted">Загрузка базы упражнений…</p>`; return; }
-    if (ui.tab === "home") renderHome(v);
+    if (ui.coach) renderCoach(v);
+    else if (ui.tab === "home") renderHome(v);
     else if (ui.tab === "log") ui.summaryId ? renderSummary(v) : ui.workoutId ? renderWorkout(v) : renderLog(v);
     else if (ui.tab === "catalog") renderCatalog(v);
     else if (ui.tab === "progress") renderProgress(v);
     else renderProfile(v);
   }
   const backBtn = (id, title, sub) => `<button class="back" id="${id}"><i>‹</i><span><h1 style="font-size:24px">${esc(title)}</h1>${sub ? `<span class="muted" style="font-size:13px">${esc(sub)}</span>` : ""}</span></button>`;
+
+  // ---------- Тренер: оценка формы 0–100 ----------
+  // Всё считается на устройстве по журналу. Формулы простые и объяснимые: каждая оценка
+  // показывает, из каких цифр она получилась.
+  const LIFTS = [
+    { name: "Жим лёжа", ids: ["Barbell_Bench_Press_-_Medium_Grip", "Wide-Grip_Barbell_Bench_Press", "Close-Grip_Barbell_Bench_Press"], elite: 1.75 },
+    { name: "Присед", ids: ["Barbell_Squat", "Barbell_Full_Squat", "Front_Squat_Clean_Grip"], elite: 2.4 },
+    { name: "Становая тяга", ids: ["Barbell_Deadlift", "Romanian_Deadlift", "Stiff-Legged_Barbell_Deadlift"], elite: 2.75 },
+    { name: "Жим над головой", ids: ["Barbell_Shoulder_Press", "Standing_Military_Press", "Machine_Shoulder_Military_Press"], elite: 1.1 },
+  ];
+  const BW_IDS = ["Pullups", "Chin-Up", "Pushups", "Dips_-_Chest_Version", "Dips_-_Triceps_Version", "Bench_Dips", "Crunches", "Bodyweight_Squat"];
+  const MAJOR = ["chest", "back", "shoulders", "quads", "hamstrings", "glutes", "biceps", "triceps"];
+  const e1rm = (w, r) => r <= 1 ? w : w * (1 + r / 30);
+  const clamp = (x, a = 0, b = 100) => Math.max(a, Math.min(b, x));
+  const pctStr = (x) => `${fmt(x * 100, 0)}%`;
+
+  function coach() {
+    const P = progress(), ws = P.ws;
+    const bwKnown = lastWeight(), bw = bwKnown || 75;
+    const kf = S.profile.sex === "Женский" ? 0.7 : 1;
+    const within = (d) => ws.filter((w) => daysAgo(w.date) < d && daysAgo(w.date) >= 0);
+    const w90 = within(90), w30 = within(30), w28 = within(28);
+    const sets = (list, fn) => list.forEach((w) => w.items.forEach((it) => doneSets(it).forEach((s) => fn(it, n(s.w) || 0, n(s.r), w))));
+    const stats = [];
+
+    // 1. Сила: расчётный 1ПМ в базовых движениях относительно веса тела
+    const lifts = LIFTS.map((L) => {
+      let best = 0; sets(w90, (it, W, R) => { if (L.ids.includes(it.exId) && W > 0 && R <= 12) best = Math.max(best, e1rm(W, R)); });
+      return { ...L, best, ratio: best / bw, score: best ? clamp((100 * best / bw) / (L.elite * kf)) : null };
+    });
+    let pullMax = 0; sets(w90, (it, W, R) => { if (["Pullups", "Chin-Up"].includes(it.exId)) pullMax = Math.max(pullMax, R); });
+    const sParts = lifts.filter((l) => l.score != null).map((l) => l.score);
+    if (pullMax) sParts.push(clamp(pullMax / (kf < 1 ? 10 : 20) * 100));
+    let sScore = sParts.length ? sParts.reduce((a, b) => a + b, 0) / sParts.length : null, sDetail;
+    if (sScore == null) { // нет базовых: берём лучший базовый (compound) подход любого упражнения
+      // только свободные веса: тренажёры (жим ногами и т.п.) сильно завышают цифры
+      let b = 0, bn = "";
+      sets(w90, (it, W, R) => { const e = ex(it.exId); if (e && e.mechanic === "compound" && ["barbell", "dumbbell", "kettlebells"].includes(e.equipment) && W > 0 && R <= 12 && e1rm(W, R) > b) { b = e1rm(W, R); bn = e.name; } });
+      if (b) { sScore = Math.min(50, clamp((100 * b / bw) / (2.2 * kf))); sDetail = `Жима, приседа и становой в журнале нет — оценка примерная, по лучшему подходу (${bn}: 1ПМ ≈ ${fmt(b, 0)} кг).`; }
+    }
+    if (!sDetail && sScore != null) sDetail = [...lifts.filter((l) => l.best).map((l) => `${l.name}: 1ПМ ≈ ${fmt(l.best, 0)} кг (${fmt(l.ratio, 2)}× веса тела)`),
+      ...(pullMax ? [`Подтягивания: ${pullMax} раз`] : [])].join(" · ");
+    stats.push({ key: "str", name: "Сила", short: "Сила", score: sScore, detail: sDetail || "Нет базовых упражнений со штангой или гантелями за 3 месяца — добавьте жим, присед или тягу." });
+
+    // 2. Выносливость: объём за тренировку, доля многоповторных подходов, повторы с собственным весом
+    let tot = 0, hi = 0, bwMax = 0;
+    sets(w30, (it, W, R) => { tot++; if (R >= 12) hi++; });
+    sets(w90, (it, W, R) => { const e = ex(it.exId); if (BW_IDS.includes(it.exId) || (e && e.equipment === "body only" && !W)) bwMax = Math.max(bwMax, R); });
+    const avgSets = w30.length ? tot / w30.length : 0;
+    const eScore = w30.length ? 40 * Math.min(1, avgSets / 20) + 30 * Math.min(1, (hi / (tot || 1)) / 0.4) + 30 * Math.min(1, bwMax / 30) : null;
+    stats.push({ key: "end", name: "Выносливость", short: "Выносл.", score: eScore,
+      detail: w30.length ? `${fmt(avgSets)} подходов за тренировку · ${pctStr(hi / (tot || 1))} подходов на 12+ повторов · ${bwMax ? `максимум ${bwMax} повторов с собственным весом` : "упражнений с собственным весом нет"}` : "Нет тренировок за последние 30 дней." });
+
+    // 3. Масса (рабочий объём): подходов в неделю на крупную группу, норма 10+
+    const g28 = {}; w28.forEach((w) => Object.entries(P.per[w.id].a.groups).forEach(([g, x]) => g28[g] = (g28[g] || 0) + x));
+    const perWeek = Object.fromEntries(MAJOR.map((g) => [g, (g28[g] || 0) / 4]));
+    const mScore = w28.length ? MAJOR.reduce((s, g) => s + Math.min(1, perWeek[g] / 10), 0) / MAJOR.length * 100 : null;
+    const avgGroup = MAJOR.reduce((s, g) => s + perWeek[g], 0) / MAJOR.length;
+    stats.push({ key: "mass", name: "Масса", short: "Масса", score: mScore,
+      detail: w28.length ? `В среднем ${fmt(avgGroup)} подхода в неделю на крупную группу мышц (для роста мышц нужно 10–20)` : "Нет тренировок за последние 4 недели." });
+
+    // 4. Режим: частота против цели из профиля
+    const goal = Math.max(1, parseInt(S.profile.freq) || 3);
+    const perW = w28.length / 4, activeWeeks = new Set(w28.map((w) => Math.floor(daysAgo(w.date) / 7))).size;
+    const rScore = ws.length ? 80 * Math.min(1, perW / goal) + 20 * Math.min(1, activeWeeks / 4) : null;
+    stats.push({ key: "reg", name: "Режим", short: "Режим", score: rScore,
+      detail: `${fmt(perW)} тренировки в неделю при цели ${goal} · активных недель: ${activeWeeks} из 4` });
+
+    // 5. Баланс: жимы / тяги / ноги / кор
+    const g30 = {}; w30.forEach((w) => Object.entries(P.per[w.id].a.groups).forEach(([g, x]) => g30[g] = (g30[g] || 0) + x));
+    const sum = (gs) => gs.reduce((s, g) => s + (g30[g] || 0), 0);
+    const push = sum(["chest", "shoulders", "triceps"]), pull = sum(["back", "biceps", "traps"]),
+      legs = sum(["quads", "hamstrings", "glutes", "calves", "hips"]), core = sum(["abs", "lowerback"]), all = push + pull + legs + core;
+    let bScore = null;
+    if (all >= 6) {
+      const pen = 60 * Math.abs(push - pull) / ((push + pull) || 1) + (legs / all < 0.25 ? (0.25 - legs / all) / 0.25 * 35 : 0) + (core / all < 0.05 ? 15 : 0);
+      bScore = clamp(100 - pen);
+    }
+    stats.push({ key: "bal", name: "Баланс", short: "Баланс", score: bScore,
+      detail: all ? `Жимы ${pctStr(push / all)} · тяги ${pctStr(pull / all)} · ноги ${pctStr(legs / all)} · кор ${pctStr(core / all)}` : "Нет данных за 30 дней." });
+
+    // 6. Прогресс: изменение рабочих весов (или повторов) за 2 месяца
+    const ses = {};
+    within(60).forEach((w) => w.items.forEach((it) => {
+      const ds = doneSets(it); if (!ds.length) return;
+      const m = Math.max(...ds.map((s) => (n(s.w) ? e1rm(n(s.w), Math.min(n(s.r), 12)) : n(s.r))));
+      (ses[it.exId] = ses[it.exId] || []).push(m);
+    }));
+    const ch = Object.values(ses).filter((x) => x.length >= 2).map((x) => (x[x.length - 1] - x[0]) / x[0] * 100);
+    const avgCh = ch.length ? ch.reduce((a, b) => a + b, 0) / ch.length : null;
+    stats.push({ key: "prog", name: "Прогресс", short: "Прогресс", score: avgCh == null ? null : clamp(40 + avgCh * 4),
+      detail: avgCh == null ? "Нужно хотя бы две записи одного упражнения за 2 месяца." : `${avgCh >= 0 ? "+" : ""}${fmt(avgCh)}% к рабочим весам за 2 месяца (по ${ch.length} упр.)` });
+
+    // итог и тип атлета
+    const W = { str: 0.25, end: 0.15, mass: 0.2, reg: 0.2, bal: 0.1, prog: 0.1 };
+    const known = stats.filter((s) => s.score != null);
+    const overall = known.length ? known.reduce((a, s) => a + s.score * W[s.key], 0) / known.reduce((a, s) => a + W[s.key], 0) : null;
+    const by = Object.fromEntries(stats.map((s) => [s.key, s.score]));
+    const trio = [["str", "Палуан", "силовой тип: главное — тяжёлые веса"], ["end", "Выносливый", "много повторов и объёма, хорошая работоспособность"], ["mass", "Бодибилдер", "большой рабочий объём на каждую группу"]]
+      .filter(([k]) => by[k] != null).sort((a, b) => by[b[0]] - by[a[0]]);
+    let type = null;
+    if (trio.length >= 2 && ws.length >= 3) type = by[trio[0][0]] - by[trio[trio.length - 1][0]] < 12 ? { name: "Универсал", about: "показатели развиты ровно" } : { name: trio[0][1], about: trio[0][2] };
+    const formName = overall == null ? "" : overall < 25 ? "Старт" : overall < 45 ? "Базовая форма" : overall < 65 ? "Хорошая форма" : overall < 80 ? "Сильная форма" : "Отличная форма";
+
+    // советы: от слабых мест, с конкретными упражнениями
+    const tips = [];
+    const firstNotDone = (ids) => ids.find((i) => !ws.some((w) => w.items.some((it) => it.exId === i))) || ids[0];
+    if (ws.length < 3) tips.push({ t: "Мало данных для точной оценки", d: `Записано тренировок: ${ws.length}. После 3–4 тренировок оценки станут точнее, особенно «Прогресс» и «Режим».`, ex: [] });
+    if (!bwKnown) tips.push({ t: "Укажите вес в профиле", d: "Сила считается относительно веса тела. Сейчас взято 75 кг по умолчанию.", ex: [] });
+    const missing = lifts.filter((l) => !l.best);
+    if (missing.length && missing.length < 4) tips.push({ t: "Добавьте недостающие базовые движения", d: `Для полной оценки силы не хватает: ${missing.map((l) => l.name.toLowerCase()).join(", ")}.`, ex: missing.map((l) => l.ids[0]) });
+    else if (missing.length === 4 && ws.length) tips.push({ t: "Включите базу: жим, присед, становую", d: "Базовые упражнения дают больше всего силы и позволяют честно её измерить.", ex: LIFTS.slice(0, 3).map((l) => l.ids[0]) });
+    if (pull > 0 && push > pull * 1.4) tips.push({ t: "Тяги отстают от жимов", d: `На ${fmt(push, 0)} подходов жимов только ${fmt(pull, 0)} тяговых. Перекос нагружает плечи; добавьте 3–4 подхода тяг на тренировку.`, ex: ["Bent_Over_Barbell_Row", "Pullups", "Seated_Cable_Rows"] });
+    if (all >= 6 && legs / all < 0.2) tips.push({ t: "Мало работы на ноги", d: `Ноги — только ${pctStr(legs / all)} подходов. Ноги — самые большие мышцы, их тренировка поднимает и силу, и общий тонус.`, ex: ["Barbell_Squat", "Leg_Press", "Romanian_Deadlift"] });
+    const weakG = MAJOR.filter((g) => perWeek[g] < 4 && w28.length).sort((a, b) => perWeek[a] - perWeek[b]).slice(0, 3);
+    if (mScore != null && mScore < 50 && weakG.length) tips.push({ t: "Добавьте объём", d: `Меньше всего подходов в неделю: ${weakG.map((g) => `${GROUP_RU[g].toLowerCase()} (${fmt(perWeek[g])})`).join(", ")}. Цель — 10+ подходов на группу в неделю.`, ex: weakG.map((g) => DB.groups.find((x) => x.id === g).exercises[0]) });
+    if (sScore != null && sScore < 45) tips.push({ t: "Силовой блок", d: "2 раза в неделю делайте базовые упражнения по 4–6 повторов. Как выполнили все подходы — прибавляйте 2,5 кг.", ex: [firstNotDone(LIFTS[0].ids), firstNotDone(LIFTS[1].ids)] });
+    if (eScore != null && eScore < 45) tips.push({ t: "Поработайте над выносливостью", d: "В конце тренировки добавьте 2–3 подхода на 15–20 повторов или круг из упражнений с собственным весом.", ex: ["Pushups", "Bodyweight_Squat", "Crunches"] });
+    if (rScore != null && rScore < 60 && ws.length >= 2) tips.push({ t: "Наладьте режим", d: `Сейчас ${fmt(perW)} тренировки в неделю при цели ${goal}. Закрепите постоянные дни, например пн/ср/пт.`, ex: [] });
+    if (avgCh != null && avgCh <= 0 && ch.length >= 2) tips.push({ t: "Веса стоят на месте", d: "Используйте двойную прогрессию: доведите повторы до верха диапазона (например 10), затем прибавьте вес. Раз в 6–8 недель — облегчённая неделя.", ex: [] });
+    const strongest = known.slice().sort((a, b) => b.score - a.score)[0];
+    return { stats, overall, formName, type, tips: tips.slice(0, 4), strongest, n: ws.length };
+  }
+
+  function radar(stats) {
+    const cx = 190, cy = 136, R = 92, k = stats.length;
+    const pt = (i, r) => { const a = -Math.PI / 2 + (i * 2 * Math.PI) / k; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; };
+    const ring = (f) => stats.map((_, i) => pt(i, R * f).map((v) => v.toFixed(1)).join(",")).join(" ");
+    const poly = stats.map((s, i) => pt(i, R * (s.score || 0) / 100).map((v) => v.toFixed(1)).join(",")).join(" ");
+    return `<svg class="chart" viewBox="0 0 380 272" role="img" aria-label="Профиль формы">
+      ${[0.25, 0.5, 0.75, 1].map((f) => `<polygon points="${ring(f)}" fill="none" stroke="var(--line)" stroke-width="1"/>`).join("")}
+      ${stats.map((_, i) => { const [x, y] = pt(i, R); return `<line x1="${cx}" y1="${cy}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="var(--line)"/>`; }).join("")}
+      <polygon points="${poly}" fill="var(--accent)" fill-opacity=".28" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>
+      ${stats.map((s, i) => { const [x, y] = pt(i, R * (s.score || 0) / 100); return s.score == null ? "" : `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" fill="var(--accent)"/>`; }).join("")}
+      ${stats.map((s, i) => { const [x, y] = pt(i, R + 22); const anc = Math.abs(x - cx) < 5 ? "middle" : x > cx ? "start" : "end";
+        return `<text x="${x.toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="${anc}" style="fill:var(--fg);font:600 12px var(--f-body)">${s.short} <tspan style="fill:var(--muted);font:500 11px var(--f-num)">${s.score == null ? "—" : Math.round(s.score)}</tspan></text>`; }).join("")}
+    </svg>`;
+  }
+  const scoreColor = (s) => s == null ? "var(--muted)" : s >= 65 ? "var(--good)" : s >= 40 ? "var(--xp)" : "var(--bad)";
+
+  function renderCoach(v) {
+    const C = coach();
+    const exChip = (id) => { const e = ex(id); return e ? `<button class="chip ex-chip" data-ex="${id}">${esc(e.name)}</button>` : ""; };
+    v.innerHTML = `
+      ${backBtn("backC", "Тренер", "Разбор формы по вашему журналу")}
+      ${C.n === 0 ? `<div class="panel empty"><div class="qicon" style="width:52px;height:52px">${icon("spark")}</div><h2>Пока нечего разбирать</h2>
+        <p class="muted" style="margin:0;max-width:44ch">Запишите первую тренировку. Тренер оценит силу, выносливость, объём, режим, баланс и прогресс по шкале от 0 до 100 и подскажет, что подтянуть.</p>
+        <button class="btn red" id="startC">Начать тренировку</button></div>` : `
+      <div class="coach-hero">
+        <div class="score-ring" style="--p:${C.overall ?? 0};--c:${scoreColor(C.overall)}"><b class="num">${C.overall == null ? "—" : Math.round(C.overall)}</b><small>из 100</small></div>
+        <div style="min-width:0"><span class="lbl">Общая форма</span><h2 style="font-size:24px">${C.formName}</h2>
+          ${C.type ? `<div class="muted" style="font-size:14px">Тип: <b style="color:var(--fg)">${C.type.name}</b> — ${C.type.about}</div>` : ""}
+          ${C.strongest ? `<div class="muted" style="font-size:14px">Сильная сторона: ${C.strongest.name.toLowerCase()}</div>` : ""}</div>
+      </div>
+      <div class="panel">${radar(C.stats)}</div>
+      <div class="exlist">${C.stats.map((s) => `
+        <div class="panel" style="gap:8px">
+          <div class="row spread"><b style="font:700 18px var(--f-display);text-transform:uppercase">${s.name}</b>
+            <span class="num" style="font-weight:700;color:${scoreColor(s.score)}">${s.score == null ? "—" : Math.round(s.score)}<span class="muted" style="font-weight:500"> / 100</span></span></div>
+          <div class="bar"><i style="width:${s.score ?? 0}%;background:${scoreColor(s.score)}"></i></div>
+          <small class="muted">${esc(s.detail)}</small></div>`).join("")}</div>
+      <h2>Советы тренера</h2>
+      ${C.tips.length ? C.tips.map((t) => `<div class="quest-card" style="align-items:flex-start"><div class="qicon">${icon("spark")}</div>
+        <div class="t"><b>${esc(t.t)}</b><small class="muted" style="font-size:14px">${esc(t.d)}</small>
+        ${t.ex.length ? `<div class="row" style="gap:6px">${t.ex.map(exChip).join("")}</div>` : ""}</div></div>`).join("")
+        : `<div class="quest-card done"><div class="qicon">${icon("check")}</div><div class="t"><b>Слабых мест не видно</b><small class="muted">Продолжайте в том же духе и постепенно прибавляйте веса.</small></div></div>`}
+      <p class="muted" style="margin:0;font-size:13px">Как считается: сила — расчётный максимум на 1 повтор (формула Эпли) в жиме, приседе, становой и жиме над головой относительно веса тела; выносливость — подходы за тренировку, доля подходов на 12+ повторов и повторы с собственным весом; масса — подходы в неделю на крупные группы мышц; режим — частота против цели из профиля; баланс — соотношение жимов, тяг, ног и кора; прогресс — изменение рабочих весов за 2 месяца. Оценка — ориентир по вашим записям, не медицинская рекомендация.</p>`}`;
+    $("#backC").onclick = () => go(ui.tab, { coach: false });
+    if ($("#startC")) $("#startC").onclick = () => { const w = ensureWorkoutForToday(); go("log", { workoutId: w.id, summaryId: null, coach: false }); };
+    v.querySelectorAll("[data-ex]").forEach((b) => b.onclick = () => openExercise(b.dataset.ex));
+  }
 
   // ---------- Главная ----------
   function lastWeight() { const ms = [...S.measurements].sort((a, b) => a.date.localeCompare(b.date)); return ms.length ? ms[ms.length - 1].weight : n(S.profile.weight); }
@@ -327,6 +500,9 @@
     const dq = dailyFor(today()), dqDone = twP && twP.dqDone;
     const xpPct = N ? Math.min(100, ((P.xp - L.xp) / (N.xp - L.xp)) * 100) : 100;
     const open = P.quests.filter((q) => !q.done && !q.locked).sort((a, b) => b.cur / b.target - a.cur / a.target).slice(0, 2);
+    const C = coach(), cs = Object.fromEntries(C.stats.map((s) => [s.key, s]));
+    const statTile = (k) => { const s = cs[k]; return `<button class="tile stat-tile" data-coach><span class="lbl">${s.short}</span><b>${s.score == null ? "—" : Math.round(s.score)}</b>
+      <div class="bar"><i style="width:${s.score ?? 0}%;background:${scoreColor(s.score)}"></i></div></button>`; };
     v.innerHTML = `
       <div class="brandline" aria-label="Batyr FIT">BATYR<i></i><span>FIT</span></div>
       <div class="hero">
@@ -341,9 +517,7 @@
       </div>
       <div class="figure-grid">
         <div class="side">
-          <div class="tile"><span class="lbl">Неделя</span><b>${weekWs.length}</b><small>тренир.</small></div>
-          <div class="tile"><span class="lbl">Тоннаж</span><b>${fmt(ton / 1000)}</b><small>тонн</small></div>
-          <div class="tile"><span class="lbl">Задания</span><b>${P.questsDone}</b><small>из ${P.quests.length}</small></div>
+          ${statTile("str")}${statTile("end")}${statTile("mass")}
         </div>
         <div>${bodyMap(groups)}</div>
         <div class="side">
@@ -360,12 +534,15 @@
       </div>
       ${open.map(questCard).join("")}
       <div class="row" style="flex-wrap:nowrap">
-        <button class="btn" id="goProg" aria-label="Уровни и задания" style="width:52px;height:52px;padding:0;border-color:var(--accent);color:var(--accent)">${icon("trophy")}</button>
+        <button class="btn round" id="goProg" aria-label="Уровни и задания" style="border-color:var(--accent);color:var(--accent)">${icon("trophy")}</button>
+        <button class="btn round" id="goCoach" aria-label="Тренер" style="border-color:var(--blue);color:var(--blue)">${icon("spark")}</button>
         <button class="btn primary big" id="start">${tw && tw.items.length ? "Продолжить тренировку" : "Начать тренировку"}</button>
       </div>
       ${!p.height || !p.weight ? `<p class="muted" style="margin:0;font-size:14px">Заполните рост и вес в <a href="#" id="toProfile" style="color:var(--fg)">профиле</a>, чтобы видеть ИМТ и получить первое задание.</p>` : ""}`;
     $("#start").onclick = () => { const w = ensureWorkoutForToday(); go("log", { workoutId: w.id, summaryId: null }); };
     $("#goProg").onclick = () => go("progress");
+    $("#goCoach").onclick = () => go("home", { coach: true });
+    v.querySelectorAll("[data-coach]").forEach((b) => b.onclick = () => go("home", { coach: true }));
     if ($("#toProfile")) $("#toProfile").onclick = (e) => { e.preventDefault(); go("profile"); };
   }
   function questCard(q) {
@@ -510,11 +687,13 @@
       </div>
       <div class="row" style="flex-wrap:nowrap">
         <button class="btn" id="edit" style="flex:1">Изменить запись</button>
-        <button class="btn primary" id="toHome" style="flex:1">Готово</button>
-      </div>`;
+        <button class="btn" id="toCoach" style="flex:1;border-color:var(--blue);color:var(--blue)">${icon("spark")}Разбор тренера</button>
+      </div>
+      <button class="btn primary big" id="toHome">Готово</button>`;
     $("#back").onclick = () => go("log", { summaryId: null });
     $("#edit").onclick = () => { w.done = false; save(); go("log", { summaryId: null, workoutId: w.id }); };
     $("#toHome").onclick = () => go("home", { summaryId: null });
+    $("#toCoach").onclick = () => go("log", { coach: true });
   }
 
   // ---------- Прогресс ----------
@@ -538,6 +717,11 @@
     const L = P.level;
     v.innerHTML = `
       <div><h1>Прогресс</h1><div class="muted">Аналитика, уровни и задания</div></div>
+      ${(() => { const C = coach(); return `<button class="coach-card" id="openCoach">
+        <div class="score-ring sm" style="--p:${C.overall ?? 0};--c:${scoreColor(C.overall)}"><b class="num">${C.overall == null ? "—" : Math.round(C.overall)}</b></div>
+        <div style="min-width:0;flex:1;text-align:left"><span class="lbl" style="color:var(--blue)">Тренер</span><b style="display:block">${C.n ? `${C.formName}${C.type ? " · " + C.type.name : ""}` : "Разбор формы"}</b>
+          <small class="muted">${C.n ? `Советов: ${C.tips.length} · сила, выносливость, масса, режим, баланс, прогресс` : "Появится после первой тренировки"}</small></div>
+        <span style="color:var(--muted);font-size:22px">›</span></button>`; })()}
       <div class="seg" role="group" aria-label="Период">
         ${[["week", "Неделя"], ["month", "Месяц"], ["all", "Всё время"]].map(([k, t]) => `<button data-p="${k}" aria-pressed="${per === k}">${t}</button>`).join("")}
       </div>
@@ -570,6 +754,7 @@
       <h2>Задания · ${P.questsDone}/${P.quests.length}</h2>
       <div class="exlist">${[...P.quests].sort((a, b) => (a.locked - b.locked) || (a.done - b.done)).map(questCard).join("")}</div>`;
     v.querySelectorAll("[data-p]").forEach((b) => b.onclick = () => { ui.period = b.dataset.p; renderProgress(v); });
+    $("#openCoach").onclick = () => go("progress", { coach: true });
   }
 
   // ---------- Упражнения ----------

@@ -85,6 +85,20 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--mu
 .brandline{display:flex;align-items:center;gap:8px;font:800 15px/1 var(--f-display);letter-spacing:.14em;color:var(--fg)}
 .brandline i{width:18px;height:3px;border-radius:2px;background:var(--brand-gold)}
 .brandline span{color:var(--brand-gold)}
+/* тренер */
+.btn.round{width:52px;height:52px;padding:0;flex:none}
+.stat-tile{text-align:left;color:var(--fg);font:inherit;cursor:pointer;display:flex;flex-direction:column;gap:4px}
+.stat-tile:hover{border-color:var(--blue)}
+.coach-hero{display:flex;gap:16px;align-items:center}
+.score-ring{--p:0;--c:var(--accent);width:104px;height:104px;flex:none;border-radius:50%;display:grid;place-items:center;align-content:center;
+  background:radial-gradient(closest-side,var(--bg) 79%,transparent 80% 100%),conic-gradient(var(--c) calc(var(--p)*1%),var(--surface-2) 0)}
+.score-ring b{font-size:32px;line-height:1}
+.score-ring small{color:var(--muted);font-size:11px}
+.score-ring.sm{width:56px;height:56px;background:radial-gradient(closest-side,var(--surface) 76%,transparent 77% 100%),conic-gradient(var(--c) calc(var(--p)*1%),var(--surface-2) 0)}
+.score-ring.sm b{font-size:17px}
+.coach-card{display:flex;gap:14px;align-items:center;width:100%;background:linear-gradient(135deg,color-mix(in srgb,var(--blue) 16%,var(--surface)),var(--surface));border:1px solid color-mix(in srgb,var(--blue) 45%,var(--line));border-radius:var(--r);padding:12px 14px;color:var(--fg);font:inherit;cursor:pointer}
+.ex-chip{border:1px solid var(--line);cursor:pointer;color:var(--fg);font:600 13px var(--f-body);padding:5px 10px}
+.ex-chip:hover{border-color:var(--accent)}
 /* home hero */
 .hero{display:flex;flex-direction:column;gap:10px}
 .lvl-line{display:flex;align-items:center;gap:10px}
