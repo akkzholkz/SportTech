@@ -160,9 +160,25 @@ svg.chart text{fill:var(--muted);font:500 10px var(--f-num)}
 .x:hover{color:var(--danger)}
 .empty{text-align:center;padding:30px 16px;display:flex;flex-direction:column;gap:10px;align-items:center}
 
-dialog{border:1px solid var(--line);padding:0;border-radius:18px;background:var(--surface);color:var(--fg);width:min(680px,calc(100vw - 24px));max-height:calc(100vh - 24px)}
+/* окно упражнения: на телефоне — шторка снизу, на компьютере — окно по центру */
+dialog{border:0;padding:0;background:transparent;color:var(--fg);width:min(680px,calc(100vw - 24px));max-width:none;max-height:none;overflow:visible}
 dialog::backdrop{background:rgb(0 0 0 / .65)}
-.dlg{padding:18px;display:flex;flex-direction:column;gap:14px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:18px;display:flex;flex-direction:column;max-height:calc(100dvh - 24px);overflow:hidden;transition:transform .2s ease}
+.grab-zone{display:none;justify-content:center;padding:10px 0 4px;flex:none;touch-action:none}
+.grab{width:44px;height:5px;border-radius:99px;background:var(--idle)}
+.dlg{padding:18px;display:flex;flex-direction:column;gap:14px;overflow-y:auto;overscroll-behavior:contain;flex:1;min-height:0}
+.dlg>*{flex-shrink:0}
+.dlg-foot{flex:none;display:flex;gap:10px;padding:12px 18px calc(12px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line);background:var(--surface)}
+.dlg-foot .btn{flex:1;padding:14px 16px;font-size:16px}
+.sheet.leaving{transform:translateY(110%)!important}
+@media (max-width:640px){
+  dialog{width:100%;margin:auto 0 0;inset:auto 0 0 0}
+  .sheet{border-radius:22px 22px 0 0;border-bottom:0;max-height:92dvh;animation:sheetUp .22s ease}
+  .grab-zone{display:flex}
+  .dlg{padding-top:6px}
+}
+@media (min-width:641px){.sheet.leaving{transform:scale(.97)!important;opacity:0;transition:transform .18s,opacity .18s}}
+@keyframes sheetUp{from{transform:translateY(100%)}to{transform:none}}
 .frames{position:relative;aspect-ratio:4/3;max-width:100%;background:#fff;border-radius:12px;overflow:hidden}
 .frames img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;transition:opacity .25s}
 .frames .cap{position:absolute;left:8px;bottom:8px;background:var(--bg);color:var(--fg);font-size:12px;padding:2px 8px;border-radius:99px}
@@ -177,7 +193,7 @@ table.m th{font-weight:600;color:var(--muted);font-size:11px;text-transform:uppe
 .scroll{overflow-x:auto}
 svg.spark{width:100%;height:80px;display:block}
 @media (max-width:420px){.figure-grid .tile b{font-size:17px} .tile{padding:8px 10px}}
-@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
 <body>
@@ -189,7 +205,7 @@ svg.spark{width:100%;height:80px;display:block}
   <button id="tab-progress" data-tab="progress"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20h16M7 16v-5M12 16V6M17 16v-8"/></svg>Прогресс</button>
   <button id="tab-profile" data-tab="profile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20c1.2-3.8 4-5.5 7.5-5.5s6.3 1.7 7.5 5.5"/></svg>Профиль</button>
 </div></nav>
-<dialog id="dlg"><div class="dlg" id="dlgBody"></div></dialog>
+<dialog id="dlg" aria-label="Упражнение"><div class="sheet"><div class="grab-zone"><span class="grab"></span></div><div class="dlg" id="dlgBody"></div><div class="dlg-foot" id="dlgFoot"></div></div></dialog>
 <script src="app.js"></script>
 </body>
 </html>

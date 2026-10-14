@@ -134,7 +134,7 @@
     return a;
   }
   const itemMax = (it) => { const ws = doneSets(it).map((s) => n(s.w)).filter((x) => x != null); return ws.length ? Math.max(...ws) : null; };
-  function history(exId, exceptId) {
+  function exHistory(exId, exceptId) {
     return sortedWorkouts().filter((w) => w.id !== exceptId)
       .map((w) => ({ w, it: w.items.find((i) => i.exId === exId) })).filter((x) => x.it && doneSets(x.it).length);
   }
@@ -155,7 +155,7 @@
   }
   function addExercise(w, exId) {
     if (!w.items.find((i) => i.exId === exId)) {
-      const prev = history(exId, w.id)[0];
+      const prev = exHistory(exId, w.id)[0];
       const first = prev ? doneSets(prev.it)[0] : null;
       w.items.push({ exId, sets: [{ w: first ? first.w : "", r: "" }] });
     }
@@ -285,7 +285,18 @@
   }
 
   // ---------- навигация ----------
-  function go(tab, opts = {}) { Object.assign(ui, { tab }, opts); render(); window.scrollTo(0, 0); }
+  // Каждый переход записывается в историю браузера, поэтому системный жест/кнопка «Назад»
+  // возвращает на предыдущий экран, а не закрывает приложение.
+  const snap = () => ({ tab: ui.tab, workoutId: ui.workoutId, summaryId: ui.summaryId, groupId: ui.groupId, q: ui.q, pickFor: ui.pickFor, period: ui.period });
+  function go(tab, opts = {}) {
+    Object.assign(ui, { tab }, opts); render(); window.scrollTo(0, 0);
+    try { history.pushState({ ui: snap() }, ""); } catch (e) {}
+  }
+  window.addEventListener("popstate", (e) => {
+    if ($("#dlg").open) { finishClose(); return; }
+    const st = e.state && e.state.ui;
+    if (st) { Object.assign(ui, st); render(); window.scrollTo(0, 0); }
+  });
   document.querySelectorAll("nav.tabs button").forEach((b) => b.addEventListener("click", () => {
     const t = b.dataset.tab;
     go(t, t === "log" ? { workoutId: null, summaryId: null } : t === "catalog" ? { groupId: null, q: "" } : {});
@@ -441,7 +452,7 @@
   }
   function itemHtml(w, it, k) {
     const e = ex(it.exId) || { name: it.exId, images: [] };
-    const prev = history(it.exId, w.id).filter((x) => x.w.date <= w.date)[0];
+    const prev = exHistory(it.exId, w.id).filter((x) => x.w.date <= w.date)[0];
     return `<div class="item">
       <div class="row spread" style="flex-wrap:nowrap">
         <button class="ex" data-act="info" data-i="${k}" style="border:0;padding:0;background:none">
@@ -606,15 +617,14 @@
   function openExercise(id) {
     const e = ex(id); if (!e) return;
     const dlg = $("#dlg"), body = $("#dlgBody");
-    const h = history(id).slice(0, 6), b = best(id);
+    const h = exHistory(id).slice(0, 6), b = best(id);
     const pw = ui.pickFor && workout(ui.pickFor);
     const inW = ui.tab === "log" && ui.workoutId;
     const yt = "https://www.youtube.com/results?search_query=" + encodeURIComponent(e.name + " exercise technique");
     const ytRu = "https://www.youtube.com/results?search_query=" + encodeURIComponent(e.name + " техника выполнения");
     const tr = "https://translate.google.com/?sl=en&tl=ru&op=translate&text=" + encodeURIComponent(e.instructions.join("\n"));
     body.innerHTML = `
-      <div class="row spread" style="flex-wrap:nowrap;align-items:flex-start">
-        <h2 style="text-transform:none;font-size:24px">${esc(e.name)}</h2><button class="x" id="dlgClose" aria-label="Закрыть">×</button></div>
+      <h2 style="text-transform:none;font-size:24px">${esc(e.name)}</h2>
       <div class="row" style="gap:6px">${[RU.equipment[e.equipment], RU.level[e.level], RU.mechanic[e.mechanic], RU.category[e.category]].filter(Boolean).map((t) => `<span class="chip">${esc(t)}</span>`).join("")}</div>
       <div class="frames">
         ${e.images.map((p, i) => `<img src="${img(p)}" alt="${i ? "Конечное" : "Начальное"} положение" style="opacity:${i ? 0 : 1}">`).join("")}
@@ -634,14 +644,17 @@
           <div class="tile"><span class="lbl">Расчётный 1ПМ</span><b>${fmt(b.e1rm)} кг</b></div></div>
         <div class="scroll"><table class="m"><tr><th>Дата</th><th>Подходы (кг×повт.)</th></tr>
         ${h.map((x) => `<tr><td>${fmtDate(x.w.date)}</td><td class="num">${esc(setsLine(x.it.sets))}</td></tr>`).join("")}</table></div>`
-        : `<p class="muted" style="margin:0">Ещё нет записей по этому упражнению.</p>`}
-      ${inW ? "" : `<button class="btn red big" id="addTo">${pw ? `Добавить в тренировку ${fmtDate(pw.date)}` : "Добавить в тренировку сегодня"}</button>`}`;
-    $("#dlgClose").onclick = () => dlg.close();
+        : `<p class="muted" style="margin:0">Ещё нет записей по этому упражнению.</p>`}`;
+    // кнопки внизу шторки — в зоне большого пальца
+    $("#dlgFoot").innerHTML = `<button class="btn" id="dlgClose">Закрыть</button>
+      ${inW ? "" : `<button class="btn red" id="addTo">${pw ? `В тренировку ${fmtShort(pw.date)}` : "В тренировку"}</button>`}`;
+    $("#dlgClose").onclick = () => closeSheet();
     if ($("#addTo")) $("#addTo").onclick = () => {
       const w = pw || ensureWorkoutForToday();
-      addExercise(w, id); dlg.close(); ui.pickFor = null; toast("Добавлено");
-      go("log", { workoutId: w.id, summaryId: null });
+      addExercise(w, id); ui.pickFor = null; toast("Добавлено");
+      closeSheet(() => go("log", { workoutId: w.id, summaryId: null }));
     };
+    body.scrollTop = 0;
     clearInterval(frameTimer);
     const imgs = body.querySelectorAll(".frames img");
     if (imgs.length > 1 && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -649,10 +662,51 @@
       frameTimer = setInterval(() => { k ^= 1; imgs[0].style.opacity = k ? 0 : 1; imgs[1].style.opacity = k ? 1 : 0;
         $("#flbl").textContent = k ? "Конечное положение" : "Начальное положение"; }, 1200);
     }
-    if (!dlg.open) dlg.showModal();
+    if (!dlg.open) {
+      dlg.querySelector(".sheet").style.transform = "";
+      dlg.showModal();
+      try { history.pushState({ sheet: true, ui: snap() }, ""); } catch (er) {}
+    }
+  }
+  // Закрытие шторки: кнопка, тап по фону, свайп вниз, системная кнопка «Назад».
+  let afterClose = null;
+  function closeSheet(then) {
+    const dlg = $("#dlg"); if (!dlg.open) { if (then) then(); return; }
+    afterClose = then || null;
+    if (history.state && history.state.sheet) history.back(); // popstate закроет шторку
+    else finishClose();
+  }
+  function finishClose() {
+    const dlg = $("#dlg"), sh = dlg.querySelector(".sheet");
+    sh.classList.add("leaving");
+    setTimeout(() => {
+      sh.classList.remove("leaving"); sh.style.transform = ""; dlg.close();
+      const f = afterClose; afterClose = null; if (f) f();
+    }, matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180);
   }
   $("#dlg").addEventListener("close", () => clearInterval(frameTimer));
-  $("#dlg").addEventListener("click", (e) => { if (e.target.id === "dlg") e.target.close(); });
+  $("#dlg").addEventListener("cancel", (e) => { e.preventDefault(); closeSheet(); }); // Esc
+  $("#dlg").addEventListener("click", (e) => { if (e.target.id === "dlg") closeSheet(); });
+  (function swipeToClose() {
+    const sheet = $("#dlg .sheet"), body = $("#dlgBody");
+    let y0 = null, dy = 0;
+    sheet.addEventListener("touchstart", (e) => {
+      const onHandle = e.target.closest(".grab-zone");
+      y0 = (onHandle || body.scrollTop <= 0) ? e.touches[0].clientY : null; dy = 0;
+    }, { passive: true });
+    sheet.addEventListener("touchmove", (e) => {
+      if (y0 == null) return;
+      dy = e.touches[0].clientY - y0;
+      if (dy > 0) { e.preventDefault(); sheet.style.transition = "none"; sheet.style.transform = `translateY(${dy}px)`; }
+      else { y0 = null; sheet.style.transform = ""; }
+    }, { passive: false });
+    sheet.addEventListener("touchend", () => {
+      if (y0 == null) return;
+      sheet.style.transition = "";
+      if (dy > 110) closeSheet(); else sheet.style.transform = "";
+      y0 = null;
+    });
+  })();
 
   // ---------- Профиль ----------
   function renderProfile(v) {
@@ -758,6 +812,7 @@
   // ---------- старт ----------
   // старые записи без флага считаем завершёнными, кроме сегодняшней
   S.workouts.forEach((w) => { if (w.done === undefined) w.done = w.date !== today(); });
+  try { history.replaceState({ ui: snap() }, ""); } catch (e) {}
   render();
   fetch("data/exercises.json").then((r) => r.json()).then((d) => { DB = d; render(); })
     .catch(() => { $("#view").innerHTML = `<div class="panel"><b>Не удалось загрузить базу упражнений.</b><span class="muted">Откройте приложение через веб-сервер (GitHub Pages или <code>python3 -m http.server</code>), а не двойным кликом по файлу.</span></div>`; });
