@@ -2,12 +2,12 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<title>Журнал зала</title>
+<title>Batyr FIT</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0b0d">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Журнал зала">
+<meta name="apple-mobile-web-app-title" content="Batyr FIT">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
@@ -20,7 +20,7 @@
   color-scheme:dark;
   --bg:#0b0b0d; --surface:#16171b; --surface-2:#202228; --line:#2c2e35; --fg:#f2f2f4; --muted:#8d909a;
   --accent:#ff4433; --accent-fg:#ffffff; --xp:#f5c518; --xp-fg:#16130a; --good:#3fbf74; --bad:#ff5e57; --blue:#4d7cff;
-  --skin:#2a2c33; --idle:#3a3d46; --danger:#ff5e57;
+  --brand-gold:#f2b843; --skin:#2a2c33; --idle:#3a3d46; --danger:#ff5e57;
   --f-display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
   --f-body:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;
   --f-num:"JetBrains Mono",ui-monospace,Menlo,monospace;
@@ -81,6 +81,10 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--mu
 .seg button{border:0;background:none;color:var(--muted);font:600 14px var(--f-body);padding:8px;border-radius:99px;cursor:pointer}
 .seg button[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
 
+/* brand */
+.brandline{display:flex;align-items:center;gap:8px;font:800 15px/1 var(--f-display);letter-spacing:.14em;color:var(--fg)}
+.brandline i{width:18px;height:3px;border-radius:2px;background:var(--brand-gold)}
+.brandline span{color:var(--brand-gold)}
 /* home hero */
 .hero{display:flex;flex-direction:column;gap:10px}
 .lvl-line{display:flex;align-items:center;gap:10px}

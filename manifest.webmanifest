@@ -1,11 +1,11 @@
 {
-  "name": "Журнал зала",
-  "short_name": "Журнал зала",
+  "name": "Batyr FIT",
+  "short_name": "Batyr FIT",
   "lang": "ru",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#0b0b0d",
+  "background_color": "#0a1330",
   "theme_color": "#0b0b0d",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },

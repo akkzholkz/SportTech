@@ -1,4 +1,4 @@
-/* Журнал зала — статичное приложение. Данные хранятся в localStorage браузера.
+/* Batyr FIT — статичное приложение. Данные хранятся в localStorage браузера.
    Прогресс (XP, уровни, задания) не хранится отдельно: он каждый раз пересчитывается из журнала,
    поэтому правка или удаление тренировки сразу честно меняет опыт. */
 (function () {
@@ -317,6 +317,7 @@
     const xpPct = N ? Math.min(100, ((P.xp - L.xp) / (N.xp - L.xp)) * 100) : 100;
     const open = P.quests.filter((q) => !q.done && !q.locked).sort((a, b) => b.cur / b.target - a.cur / a.target).slice(0, 2);
     v.innerHTML = `
+      <div class="brandline" aria-label="Batyr FIT">BATYR<i></i><span>FIT</span></div>
       <div class="hero">
         <div class="row spread" style="flex-wrap:nowrap">
           <div class="lvl-line">${badge(L)}<div><h1>${esc(p.name || "Атлет")}</h1>
@@ -733,7 +734,7 @@
     v.querySelectorAll("[data-m]").forEach((b) => b.onclick = () => { S.measurements = S.measurements.filter((m) => m.id !== b.dataset.m); save(); renderProfile(v); });
     $("#exp").onclick = () => {
       const blob = new Blob([JSON.stringify(S, null, 2)], { type: "application/json" });
-      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `fitlog-${today()}.json`;
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `batyr-fit-${today()}.json`;
       document.body.appendChild(a); a.click(); a.remove();
     };
     $("#imp").onchange = (e) => {
