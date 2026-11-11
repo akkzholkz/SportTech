@@ -74,11 +74,11 @@
   // ---------- state ----------
   let S = load();
   let DB = null;
-  const ui = { coach: false, tab: "home", workoutId: null, summaryId: null, groupId: null, q: "", pickFor: null, period: "month" };
+  const ui = { coach: false, run: false, tab: "home", workoutId: null, summaryId: null, groupId: null, q: "", pickFor: null, period: "month" };
 
-  function blank() { return { profile: {}, measurements: [], workouts: [] }; }
+  function blank() { return { profile: {}, measurements: [], workouts: [], run: { done: {} } }; }
   function load() {
-    try { const v = JSON.parse(localStorage.getItem(KEY)); if (v && v.workouts) return Object.assign(blank(), v); } catch (e) {}
+    try { const v = JSON.parse(localStorage.getItem(KEY)); if (v && v.workouts) { const o = Object.assign(blank(), v); if (!o.run || !o.run.done) o.run = { done: {} }; return o; } } catch (e) {}
     return blank();
   }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
@@ -225,6 +225,7 @@
     check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
     lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
     spark: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
+    run: '<circle cx="14.5" cy="4.5" r="2"/><path d="M8 21l3-6 3 2v4M6 12l3-4h5l2 4 3 1M11 15l-1-4"/>',
     trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0zM8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8.5 20h7"/>',
   };
   const icon = (k) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[k] || ICONS.flag}</svg>`;
@@ -288,7 +289,7 @@
   // ---------- навигация ----------
   // Каждый переход записывается в историю браузера, поэтому системный жест/кнопка «Назад»
   // возвращает на предыдущий экран, а не закрывает приложение.
-  const snap = () => ({ tab: ui.tab, workoutId: ui.workoutId, summaryId: ui.summaryId, groupId: ui.groupId, q: ui.q, pickFor: ui.pickFor, period: ui.period, coach: ui.coach });
+  const snap = () => ({ tab: ui.tab, workoutId: ui.workoutId, summaryId: ui.summaryId, groupId: ui.groupId, q: ui.q, pickFor: ui.pickFor, period: ui.period, coach: ui.coach, run: ui.run });
   function go(tab, opts = {}) {
     Object.assign(ui, { tab }, opts); render(); window.scrollTo(0, 0);
     try { history.pushState({ ui: snap() }, ""); } catch (e) {}
@@ -300,13 +301,14 @@
   });
   document.querySelectorAll("nav.tabs button").forEach((b) => b.addEventListener("click", () => {
     const t = b.dataset.tab;
-    go(t, Object.assign({ coach: false }, t === "log" ? { workoutId: null, summaryId: null } : t === "catalog" ? { groupId: null, q: "" } : {}));
+    go(t, Object.assign({ coach: false, run: false }, t === "log" ? { workoutId: null, summaryId: null } : t === "catalog" ? { groupId: null, q: "" } : {}));
   }));
   function render() {
     document.querySelectorAll("nav.tabs button").forEach((b) => b.setAttribute("aria-current", String(b.dataset.tab === ui.tab)));
     const v = $("#view");
     if (!DB) { v.innerHTML = `<p class="muted">Загрузка базы упражнений…</p>`; return; }
     if (ui.coach) renderCoach(v);
+    else if (ui.run) renderRun(v);
     else if (ui.tab === "home") renderHome(v);
     else if (ui.tab === "log") ui.summaryId ? renderSummary(v) : ui.workoutId ? renderWorkout(v) : renderLog(v);
     else if (ui.tab === "catalog") renderCatalog(v);
@@ -486,6 +488,132 @@
     v.querySelectorAll("[data-ex]").forEach((b) => b.onclick = () => openExercise(b.dataset.ex));
   }
 
+  // ---------- Бег: план возвращения на 12 недель ----------
+  // План статичный, в данных хранятся только отметки о выполнении: S.run.done[id] = дата.
+  // Пульс ориентировочный: макс. ≈ 220 − возраст, лёгкая зона ≤ ~75%.
+  const RUN_T = {
+    wr: { name: "Бег/шаг", c: "var(--good)" }, easy: { name: "Лёгкий", c: "var(--good)" },
+    long: { name: "Длительная", c: "var(--blue)" }, strides: { name: "Лёгкий + спринты", c: "var(--xp)" },
+    tempo: { name: "Темповый", c: "var(--accent)" }, str: { name: "Силовая", c: "var(--muted)" },
+    test: { name: "Контрольная", c: "var(--accent)" },
+  };
+  const STR = (t) => ["Вт/Пт", "str", t, 25, "без отказа"];
+  const RUN_PLAN = [
+    { note: "Старт. Темп не смотрим вообще", s: [["Пн", "wr", "8 × (1 мин бег + 2 мин шаг)", 24, "≤145"], ["Ср", "wr", "6 × (2 мин бег + 2 мин шаг)", 24, "≤145"],
+      STR("Присед, выпады, ягодичный мост, икры, планка — 2–3 круга"), ["Сб", "long", "45 мин быстрой ходьбы со вставками бега по 1–2 мин", 45, "≤140"]] },
+    { s: [["Пн", "wr", "6 × (3 мин бег + 1,5 мин шаг)", 27, "≤145"], ["Ср", "wr", "5 × (3 мин бег + 2 мин шаг)", 25, "≤145"],
+      STR("Тот же круг, 2–3 подхода"), ["Сб", "long", "6 × (4 мин бег + 2 мин шаг)", 36, "≤145"]] },
+    { s: [["Пн", "wr", "5 × (4 мин бег + 1 мин шаг)", 25, "≤145"], ["Ср", "wr", "4 × (6 мин бег + 1 мин шаг)", 28, "≤145"],
+      STR("Тот же круг, 3 подхода"), ["Сб", "long", "3 × (10 мин бег + 2 мин шаг)", 36, "≤145"]] },
+    { note: "Цель этапа — 20–25 мин без остановок. Тяжело — повтори неделю 3", s: [["Пн", "wr", "3 × (8 мин бег + 1 мин шаг)", 27, "≤145"],
+      ["Ср", "wr", "2 × (12 мин бег + 1 мин шаг)", 25, "≤145"], STR("Тот же круг, 3 подхода"), ["Сб", "long", "20–25 мин бега без остановок", 25, "≤145"]] },
+    { note: "Ускорения ~85%, не до упора. Между ними 1 мин шагом", s: [["Пн", "strides", "25 мин лёгкого бега + 4 × 15 сек ускорений", 28, "≤145"],
+      ["Ср", "easy", "25 мин лёгкого бега", 25, "≤145"], STR("Круг на ноги и кор"), ["Сб", "long", "35 мин лёгкого бега", 35, "≤145"]] },
+    { s: [["Пн", "strides", "25 мин + 6 × 15 сек ускорений", 30, "≤145"], ["Ср", "easy", "30 мин лёгкого бега", 30, "≤145"],
+      STR("Круг на ноги и кор"), ["Сб", "long", "40 мин лёгкого бега", 40, "≤145"]] },
+    { s: [["Пн", "strides", "30 мин + 6 × 20 сек ускорений", 35, "≤145"], ["Ср", "easy", "30 мин лёгкого бега", 30, "≤145"],
+      STR("Круг на ноги и кор"), ["Сб", "long", "45 мин лёгкого бега", 45, "≤145"]] },
+    { note: "Разгрузочная неделя — восстановление", s: [["Пн", "strides", "25 мин + 4 × 20 сек ускорений", 28, "≤145"],
+      ["Ср", "easy", "25 мин лёгкого бега", 25, "≤145"], STR("Круг на ноги и кор"), ["Сб", "long", "35 мин лёгкого бега", 35, "≤145"]] },
+    { note: "Первый темповый: говорить можно только короткими фразами", s: [["Пн", "strides", "30 мин + 6 × 20 сек ускорений", 35, "≤145"],
+      ["Ср", "tempo", "10 мин разминка + 2 × 8 мин темпа (между ними 2 мин трусцой) + 10 мин заминка", 38, "160–170"],
+      STR("Круг на ноги и кор"), ["Сб", "long", "50 мин лёгкого бега", 50, "≤145"], ["Вс", "easy", "25 мин очень лёгкого бега — по желанию", 25, "≤140", true]] },
+    { s: [["Пн", "strides", "30 мин + 6 × 20 сек ускорений", 35, "≤145"],
+      ["Ср", "tempo", "10 мин разминка + 2 × 10 мин темпа (между ними 2 мин трусцой) + 10 мин заминка", 42, "160–170"],
+      STR("Круг на ноги и кор"), ["Сб", "long", "55 мин лёгкого бега", 55, "≤145"], ["Вс", "easy", "25 мин очень лёгкого бега — по желанию", 25, "≤140", true]] },
+    { s: [["Пн", "strides", "35 мин + 6 × 20 сек ускорений", 40, "≤145"],
+      ["Ср", "tempo", "10 мин разминка + 20 мин темпа без остановок + 10 мин заминка", 40, "160–170"],
+      STR("Круг на ноги и кор"), ["Сб", "long", "60 мин лёгкого бега", 60, "≤145"], ["Вс", "easy", "30 мин очень лёгкого бега — по желанию", 30, "≤140", true]] },
+    { note: "Неделя контроля: объём ниже, в субботу — 5 км по ощущениям", s: [["Пн", "easy", "30 мин лёгкого бега", 30, "≤145"],
+      ["Ср", "strides", "25 мин + 4 × 20 сек ускорений", 28, "≤145"], ["Вт/Пт", "str", "Лёгкий круг на ноги и кор", 20, "без отказа"],
+      ["Сб", "test", "15 мин разминка + 5 км ровно по ощущениям + 10 мин заминка. Цель по времени не ставим", 55, "комфортно тяжело"]] },
+  ];
+  const RUN_GUIDE = [
+    ["Лёгкий", "с 1-й недели", "~80% всего бега. Разговорный темп, пульс ≤145"],
+    ["Длительная", "с 1-й недели", "Самая долгая тренировка недели, в лёгком темпе"],
+    ["Спринты", "с 5-й недели", "Ускорения 15–20 сек на ~85% в конце лёгкого бега"],
+    ["Темповый", "с 9-й недели", "Комфортно тяжело, ~160–170, короткие фразы"],
+    ["Пороговые", "после плана", "Отрезки 5–8 мин чуть быстрее темпового, с отдыхом"],
+    ["МПК", "с 4-го месяца", "Интервалы 2–4 мин на 90–95% — когда будет база и снизится вес"],
+  ];
+  const RUN_MISS = [
+    ["Пропустил 1 тренировку, остальные легко", "Иди на следующую неделю по плану"],
+    ["Пропустил 1, остальные дались тяжело", "Повтори неделю — это не провал"],
+    ["Пропустил 2–3 за неделю", "Повтори неделю целиком"],
+    ["Перерыв 1–2 недели", "Откатись на 1 неделю назад"],
+    ["Перерыв больше 2 недель", "Откатись на 2–3 недели назад"],
+    ["Всегда", "Не догоняй: никаких двух беговых дней подряд. Болит сустав — отдых и ходьба"],
+  ];
+  const runOpen = new Set();
+  function runState() {
+    const done = (S.run && S.run.done) || {};
+    const weeks = RUN_PLAN.map((wk, wi) => {
+      const ss = wk.s.map((x, i) => ({ id: `${wi + 1}-${i}`, day: x[0], type: x[1], text: x[2], min: x[3], zone: x[4], opt: !!x[5], done: done[`${wi + 1}-${i}`] || null }));
+      const req = ss.filter((x) => !x.opt);
+      return { n: wi + 1, note: wk.note, ss, req: req.length, got: req.filter((x) => x.done).length };
+    });
+    const cur = weeks.find((w) => w.got < w.req) || null;
+    const next = cur ? cur.ss.find((x) => !x.opt && !x.done) : null;
+    const total = weeks.reduce((s, w) => s + w.req, 0), got = weeks.reduce((s, w) => s + w.got, 0);
+    const dates = Object.values(done).sort();
+    const last = dates.length ? dates[dates.length - 1] : null;
+    return { weeks, cur, next, total, got, last, gap: last ? daysAgo(last) : null };
+  }
+  function runCard() {
+    const R = runState();
+    const sub = R.next ? `${R.next.day} · ${RUN_T[R.next.type].name}: ${R.next.text}` : R.got ? "План пройден! Время для пороговых" : "12 недель возвращения в бег";
+    return `<button class="quest-card run-s" id="goRun">
+      <div class="qicon" style="background:color-mix(in srgb,var(--good) 18%,transparent);color:var(--good)">${icon("run")}</div>
+      <div class="t"><span class="lbl">Бег · ${R.cur ? `неделя ${R.cur.n} из ${RUN_PLAN.length}` : "готово"}</span><b>${esc(sub)}</b>
+        <div class="bar"><i style="width:${(R.got / R.total) * 100}%;background:var(--good)"></i></div></div>
+      <span class="chip good num">${R.got}/${R.total}</span></button>`;
+  }
+  function renderRun(v) {
+    const R = runState();
+    if (R.cur && !runOpen.size) runOpen.add(R.cur.n);
+    const row = (x) => `<button class="quest-card run-s ${x.done ? "done" : ""}" data-run="${x.id}" aria-pressed="${!!x.done}">
+      <div class="qicon" style="${x.done ? "" : `background:var(--surface-2);color:${RUN_T[x.type].c}`}">${icon(x.done ? "check" : x.type === "str" ? "bar" : "run")}</div>
+      <div class="t"><span class="lbl" style="color:${RUN_T[x.type].c}">${x.day} · ${RUN_T[x.type].name}${x.opt ? " · по желанию" : ""}</span><b>${esc(x.text)}</b>
+        <small class="muted">${x.min} мин · ${x.type === "str" ? "" : "пульс "}${esc(x.zone)}${x.done ? ` · ✓ ${fmtShort(x.done)}` : ""}</small></div></button>`;
+    v.innerHTML = `
+      ${backBtn("backR", "Бег", "Возвращение за 12 недель — без погони за цифрами")}
+      <div class="panel">
+        <div class="row spread"><span class="lbl">${R.cur ? `Неделя ${R.cur.n} из ${RUN_PLAN.length}` : "План пройден"}</span><span class="num muted" style="font-size:13px">${R.got} из ${R.total}</span></div>
+        <div class="bar"><i style="width:${(R.got / R.total) * 100}%;background:var(--good)"></i></div>
+        ${R.next ? `<div><span class="lbl">Следующая</span><h2 style="font-size:22px">${RUN_T[R.next.type].name}</h2>
+          <div>${esc(R.next.text)}</div><small class="muted">${R.next.min} мин · ${R.next.type === "str" ? "" : "пульс "}${esc(R.next.zone)}</small></div>
+          <button class="btn primary big" id="runDone">Сделал сегодня</button>`
+        : `<div class="muted">Сделай контрольные 5 км ещё раз через пару недель и добавляй пороговые — шпаргалка ниже.</div>`}
+      </div>
+      ${R.gap != null && R.gap > 7 && R.cur ? `<div class="quest-card" style="border-color:var(--xp)"><div class="qicon" style="background:color-mix(in srgb,var(--xp) 18%,transparent);color:var(--xp)">${icon("flag")}</div>
+        <div class="t"><b>Перерыв ${Math.round(R.gap)} дн.</b><small class="muted">${R.gap > 14 ? "Откатись на 2–3 недели назад" : "Откатись на неделю назад"}: нажми «Повторить неделю» у нужной недели. Это нормально.</small></div></div>` : ""}
+      ${R.weeks.map((w) => `<details class="panel run-wk" data-wk="${w.n}" ${runOpen.has(w.n) ? "open" : ""}>
+        <summary class="row spread"><b style="font:700 18px var(--f-display);text-transform:uppercase">Неделя ${w.n}${R.cur && R.cur.n === w.n ? ` <span class="chip good">сейчас</span>` : ""}</b>
+          <span class="chip ${w.got >= w.req ? "good" : ""} num">${w.got}/${w.req}</span></summary>
+        ${w.note ? `<small class="muted">${esc(w.note)}</small>` : ""}
+        <div class="exlist">${w.ss.map(row).join("")}</div>
+        ${w.ss.some((x) => x.done) ? `<button class="btn sm danger" data-reset="${w.n}">Повторить неделю</button>` : ""}
+      </details>`).join("")}
+      <h2>Если пропустил</h2>
+      <div class="panel" style="gap:8px">${RUN_MISS.map(([a, b]) => `<div><b style="font-weight:600">${a}</b><div class="muted" style="font-size:14px">${b}</div></div>`).join("")}</div>
+      <h2>6 видов тренировок</h2>
+      <div class="panel" style="gap:8px">${RUN_GUIDE.map(([a, b, c]) => `<div><div class="row spread"><b style="font-weight:600">${a}</b><span class="chip">${b}</span></div><div class="muted" style="font-size:14px">${c}</div></div>`).join("")}</div>
+      <p class="muted" style="margin:0;font-size:13px">Темп не смотрим — только пульс и ощущения. Объём растёт не больше 10% в неделю. После тренировки должно оставаться «мог бы ещё». Пульс примерный (220 − возраст); точнее — по часам. Не медицинская рекомендация.</p>`;
+    $("#backR").onclick = () => go("home", { run: false });
+    if ($("#runDone")) $("#runDone").onclick = () => { S.run.done[R.next.id] = today(); save(); toast("Есть! Отмечено"); render(); };
+    v.querySelectorAll("[data-run]").forEach((b) => b.onclick = () => {
+      const id = b.dataset.run;
+      if (S.run.done[id]) delete S.run.done[id]; else S.run.done[id] = today();
+      save(); render();
+    });
+    v.querySelectorAll("details[data-wk]").forEach((d) => d.addEventListener("toggle", () => { const k = +d.dataset.wk; d.open ? runOpen.add(k) : runOpen.delete(k); }));
+    v.querySelectorAll("[data-reset]").forEach((b) => b.onclick = () => armed(b, () => {
+      const k = b.dataset.reset;
+      Object.keys(S.run.done).forEach((id) => { if (id.split("-")[0] === k) delete S.run.done[id]; });
+      save(); toast(`Неделя ${k} — заново`); render();
+    }));
+  }
+
   // ---------- Главная ----------
   function lastWeight() { const ms = [...S.measurements].sort((a, b) => a.date.localeCompare(b.date)); return ms.length ? ms[ms.length - 1].weight : n(S.profile.weight); }
   function renderHome(v) {
@@ -532,6 +660,7 @@
           <div class="bar xp"><i style="width:${dqDone ? 100 : 0}%"></i></div></div>
         <span class="chip xp">+${XP_RULES.daily} XP</span>
       </div>
+      ${runCard()}
       ${open.map(questCard).join("")}
       <div class="row" style="flex-wrap:nowrap">
         <button class="btn round" id="goProg" aria-label="Уровни и задания" style="border-color:var(--accent);color:var(--accent)">${icon("trophy")}</button>
@@ -542,6 +671,7 @@
     $("#start").onclick = () => { const w = ensureWorkoutForToday(); go("log", { workoutId: w.id, summaryId: null }); };
     $("#goProg").onclick = () => go("progress");
     $("#goCoach").onclick = () => go("home", { coach: true });
+    $("#goRun").onclick = () => go("home", { run: true });
     v.querySelectorAll("[data-coach]").forEach((b) => b.onclick = () => go("home", { coach: true }));
     if ($("#toProfile")) $("#toProfile").onclick = (e) => { e.preventDefault(); go("profile"); };
   }
